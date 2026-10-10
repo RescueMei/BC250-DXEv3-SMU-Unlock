@@ -151,6 +151,7 @@ STATIC UINTN  mSubq4CurIdx = 0;
 //
 STATIC MEIMEIDXEV3_SMU_UNLOCK_PROTOCOL  mSmuUnlockProtocol;
 STATIC EFI_HANDLE                       mSmuUnlockProtocolHandle = NULL;
+STATIC BOOLEAN                          mUnlocked = FALSE;
 
 /**
   Read a 32-bit value from an SMN register through the host bridge PCI config
@@ -1206,6 +1207,63 @@ ReadSmuUnlockEnabled (
 
   @retval EFI_SUCCESS  The driver completed (or declined) its work.
 **/
+/**
+  Grant privileged SMU access for this boot (protocol method).
+
+  Idempotent: performs the unlock sequence if it has not already run and
+  returns EFI_SUCCESS when the gated cluster is already open.  Used by one-shot
+  factory-learning paths that need privileged access even when the SmuUnlock
+  variable is disabled; normal feature operation still follows the variable.
+
+  @param[in]  This  Protocol instance pointer.
+
+  @retval EFI_SUCCESS  Privileged SMU access is available.
+  @retval others       The unlock sequence failed.
+**/
+STATIC
+EFI_STATUS
+EFIAPI
+SmuUnlockGrant (
+  IN MEIMEIDXEV3_SMU_UNLOCK_PROTOCOL  *This
+  )
+{
+  EFI_STATUS            Status;
+  EFI_PHYSICAL_ADDRESS  PagePhys;
+  UINT8                 *PageVa;
+
+  (VOID)This;
+
+  //
+  // Deliberately independent of the SmuUnlock variable: any caller may request
+  // privileged access.  The variable only controls whether the entry point
+  // unlocks eagerly at boot; callers still decide what to do with the access.
+  //
+  if (mUnlocked) {
+    return EFI_SUCCESS;
+  }
+
+  PagePhys = 0xFFFFFFFFU;
+  Status = gBS->AllocatePages (
+                  AllocateMaxAddress,
+                  EfiRuntimeServicesData,
+                  EFI_SIZE_TO_PAGES (EFI_PAGE_SIZE),
+                  &PagePhys
+                  );
+  if (EFI_ERROR (Status)) {
+    DEBUG ((DEBUG_ERROR, "BC250DXEv3SMUUnlockDxe: Grant staging page allocation failed: %r\n", Status));
+    return Status;
+  }
+
+  PageVa = (UINT8 *)(UINTN)PagePhys;
+  Status = DoSmuUnlock (PageVa, PagePhys);
+  gBS->FreePages (PagePhys, EFI_SIZE_TO_PAGES (EFI_PAGE_SIZE));
+
+  if (!EFI_ERROR (Status)) {
+    mUnlocked = TRUE;
+  }
+  return Status;
+}
+
 EFI_STATUS
 EFIAPI
 BC250DXEv3SMUUnlockEntryPoint (
@@ -1213,21 +1271,20 @@ BC250DXEv3SMUUnlockEntryPoint (
   IN EFI_SYSTEM_TABLE  *SystemTable
   )
 {
-  EFI_STATUS            Status;
-  EFI_PHYSICAL_ADDRESS  PagePhys;
-  UINT8                 *PageVa;
+  EFI_STATUS  Status;
 
   DEBUG ((DEBUG_INFO, "BC250DXEv3SMUUnlockDxe: entry\n"));
 
   //
-  // Publish the "SMU unlock ran" marker protocol before any early return.
-  // Consumers (SMU patch, core unlock) list this GUID in their [Depex] so the
-  // DXE dispatcher will not load them before this driver has executed on this
-  // boot.  The marker is an ordering signal only; consumers still probe the
-  // gated Q3 interface at runtime to decide whether it is actually usable.
+  // Publish the SMU-unlock protocol before any early return.  Consumers (SMU
+  // patch, core unlock, CU unlock) list this GUID in their [Depex] so the DXE
+  // dispatcher will not load them before this driver has executed.  Besides the
+  // ordering marker, Grant() lets a one-shot factory-learning path request the
+  // unlock on demand; normal feature operation still depends on the variable.
   //
   if (mSmuUnlockProtocolHandle == NULL) {
     mSmuUnlockProtocol.Revision = 1U;
+    mSmuUnlockProtocol.Grant    = SmuUnlockGrant;
     Status = gBS->InstallProtocolInterface (
                     &mSmuUnlockProtocolHandle,
                     &gMeiMeiDXEv3SmuUnlockProtocolGuid,
@@ -1245,38 +1302,15 @@ BC250DXEv3SMUUnlockEntryPoint (
   //
   // The unlock is gated by the shared MeiMeiDXEv3SmuUnlockVar variable managed
   // by the BC250-DXEv3-Menu-Driver.  When the SmuUnlock option is disabled or
-  // the variable is absent, skip all SMU activity.
+  // the variable is absent, skip all SMU activity (learning paths may still call
+  // Grant()).
   //
   if (!ReadSmuUnlockEnabled ()) {
     DEBUG ((DEBUG_INFO, "BC250DXEv3SMUUnlockDxe: SMU unlock not enabled, skipping\n"));
     return EFI_SUCCESS;
   }
 
-  //
-  // Allocate one page below 4GB that the SMU DMA engine can address.  In the
-  // DXE phase the CPU runs with an identity mapping (virtual == physical), so
-  // the returned physical address can also be used as the virtual address.
-  //
-  PagePhys = 0xFFFFFFFFU;
-  Status = gBS->AllocatePages (
-                  AllocateMaxAddress,
-                  EfiRuntimeServicesData,
-                  EFI_SIZE_TO_PAGES (EFI_PAGE_SIZE),
-                  &PagePhys
-                  );
-  if (EFI_ERROR (Status)) {
-    DEBUG ((DEBUG_ERROR, "BC250DXEv3SMUUnlockDxe: staging page allocation failed: %r\n", Status));
-    return EFI_SUCCESS;
-  }
-
-  PageVa = (UINT8 *)(UINTN)PagePhys;
-
-  DEBUG ((DEBUG_INFO, "BC250DXEv3SMUUnlockDxe: staging page phys=0x%lx\n", (UINT64)PagePhys));
-
-  Status = DoSmuUnlock (PageVa, PagePhys);
-
-  gBS->FreePages (PagePhys, EFI_SIZE_TO_PAGES (EFI_PAGE_SIZE));
-
+  Status = SmuUnlockGrant (&mSmuUnlockProtocol);
   DEBUG ((DEBUG_INFO, "BC250DXEv3SMUUnlockDxe: result=%r\n", Status));
 
   //
