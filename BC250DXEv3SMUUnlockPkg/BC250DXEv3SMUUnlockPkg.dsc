@@ -19,6 +19,7 @@
 
 [Packages]
   MdePkg/MdePkg.dec
+  MeiMeiDXEv3SharedPkg/MeiMeiDXEv3SharedPkg.dec
   BC250DXEv3SMUUnlockPkg/BC250DXEv3SMUUnlockPkg.dec
 
 [LibraryClasses]
