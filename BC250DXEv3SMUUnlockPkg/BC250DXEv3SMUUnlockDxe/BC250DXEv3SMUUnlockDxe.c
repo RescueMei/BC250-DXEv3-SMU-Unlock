@@ -1160,6 +1160,7 @@ ReadSmuUnlockEnabled (
   UINTN               DataSize;
   SMU_UNLOCK_CONFIG   Config;
   EFI_GUID            ConfigGuid = MEIMEIDXEV3_CONFIG_VAR_GUID;
+  UINT32              Attributes;
 
   DataSize = sizeof (Config);
   ZeroMem (&Config, sizeof (Config));
@@ -1167,7 +1168,7 @@ ReadSmuUnlockEnabled (
   Status = gRT->GetVariable (
                   MEIMEIDXEV3_SMU_UNLOCK_VAR_NAME,
                   &ConfigGuid,
-                  NULL,
+                  &Attributes,
                   &DataSize,
                   &Config
                   );
@@ -1187,6 +1188,13 @@ ReadSmuUnlockEnabled (
   if (EFI_ERROR (Status)) {
     DEBUG ((DEBUG_WARN, "BC250DXEv3SMUUnlockDxe: failed to read %s: %r\n",
             MEIMEIDXEV3_SMU_UNLOCK_VAR_NAME, Status));
+    return FALSE;
+  }
+
+  if (Attributes != MEIMEIDXEV3_CONFIG_VAR_ATTRIBUTES) {
+    DEBUG ((DEBUG_WARN,
+            "BC250DXEv3SMUUnlockDxe: %s has attributes 0x%x (want 0x%x), SMU unlock disabled\n",
+            MEIMEIDXEV3_SMU_UNLOCK_VAR_NAME, Attributes, MEIMEIDXEV3_CONFIG_VAR_ATTRIBUTES));
     return FALSE;
   }
 
