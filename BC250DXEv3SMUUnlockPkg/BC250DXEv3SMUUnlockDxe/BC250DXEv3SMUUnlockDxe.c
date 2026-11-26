@@ -32,6 +32,25 @@
 
 #include <MeiMeiDXEv3MenuConfig.h>
 #include <MeiMeiDXEv3SmuUnlockProtocol.h>
+#include <Protocol/MeiMeiDXEv3DriverInfo.h>
+
+//
+// Driver identity reported to the BC250-DXEv3-Driver-Info telemetry driver.
+//
+#define BC250_SMU_UNLOCK_VERSION  MEIMEIDXEV3_MAKE_VERSION (1, 0, 0)
+
+STATIC EFI_HANDLE  mDriverInfoHandle = NULL;
+
+STATIC CONST MEIMEIDXEV3_DRIVER_INFO  mDriverInfo = {
+  MEIMEIDXEV3_DRIVER_INFO_REVISION,
+  sizeof (MEIMEIDXEV3_DRIVER_INFO),
+  L"SMU-Unlock",
+  BC250_SMU_UNLOCK_VERSION,
+  { 0xA3F8B2D5, 0x7C4E, 0x4F0A, { 0xB1, 0xD2, 0x9E, 0x6F, 0x3C, 0x8A, 0x5B, 0x71 } },
+  MEIMEIDXEV3_SMU_UNLOCK_SCHEMA,
+  0,
+  MEIMEIDXEV3_DRIVER_CAP_CONFIG
+};
 
 //
 // Host bridge PCI configuration-space offsets that expose the SMN indirect
@@ -1282,6 +1301,22 @@ BC250DXEv3SMUUnlockEntryPoint (
   EFI_STATUS  Status;
 
   DEBUG ((DEBUG_INFO, "BC250DXEv3SMUUnlockDxe: entry\n"));
+  //
+  // Publish this driver's identity record for the telemetry driver before any
+  // early return.
+  //
+  if (mDriverInfoHandle == NULL) {
+    Status = gBS->InstallProtocolInterface (
+                    &mDriverInfoHandle,
+                    &gMeiMeiDXEv3DriverInfoProtocolGuid,
+                    EFI_NATIVE_INTERFACE,
+                    (VOID *)&mDriverInfo
+                    );
+    if (EFI_ERROR (Status)) {
+      DEBUG ((DEBUG_ERROR, "BC250DXEv3SMUUnlockDxe: driver info install failed: %r\n", Status));
+    }
+  }
+
 
   //
   // Publish the SMU-unlock protocol before any early return.  Consumers (SMU

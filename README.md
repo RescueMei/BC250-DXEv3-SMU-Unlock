@@ -68,6 +68,8 @@ disabled; the boot continues.
 
 ## Protocols
 
+Also publishes `gMeiMeiDXEv3DriverInfoProtocolGuid` with its name, version, module GUID, config schema, and payload version for the `BC250-DXEv3-Driver-Info` telemetry driver.
+
 `gMeiMeiDXEv3SmuUnlockProtocolGuid`
 (`A7C3D5E1-94B2-4C6D-8F1A-3B5D7E9C2F68`), header
 `<MeiMeiDXEv3SmuUnlockProtocol.h>`.
